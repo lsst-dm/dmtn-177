@@ -14,7 +14,7 @@ Shared-nothing gen3 workflow execution
 DMTN-177
 ========
 
-Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the data are retrieved at the start of the workflow and stored at the end of the workflow, but during the workflow execution only local files are in use. This note describes the issues and provides a possible design.
+Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling. This note describes the issues and provides a possible design.
 
 **Links:**
 
