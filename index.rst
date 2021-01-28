@@ -159,11 +159,43 @@ Pre-emption still has to be understood in terms of the registry sync jobs and re
 This approach allows the submission system to decide whether the registry is updated multiple times within the graph or solely at the end since the registry merging jobs can be configured to either merge the inputs and pass them on complete, or merge, sync and trim.
 A trimmed registry can not be passed on to the next job if the remainder has not been synced with the cloud registry.
 
+Limited Read-Only Registry
+--------------------------
+
+When a quantum graph is constructed the graph builder knows every single input dataset and every output dataset and how they relate to each other.
+The graph builder also knows the expected URIs of all the files created by the pipelines.
+This knowledge could be used to construct a limited in-memory non-SQL registry that could be constructed by reading a static file created by the graph builder.
+This static file would then be passed to every job being executed and importantly, unlike the externalized approach above, it will never need to handle merging of registry information during the execution of the workflow graph.
+
+On ``butler.put()`` the implementation would check that the relevant entry is expected but otherwise not try to do anything else.
+The datastore would also write the file to the object store and interact with registry but registry would not write anything to registry.
+Datastore would need to be changed to allow it to read the output URI directly from the registry to ensure that the expected output URI matches the one chosen by datastore.
+This should be possible with a minor refactoring and is somewhat related to the refactoring that will be required to generate signed URLs from the URIs.
+
+On completion of the workflow the registry information can be handled in two ways:
+
+1. As for the externalized approach, insert a new job at the end of the workflow graph that adds the registry entries into the main registry.
+2. On workflow completion send the registry file to a queue that can integrate the entries into the main registry.
+
+The first ensures that workflow completion coincides with registry updates but could lead to an arbitrary number of these jobs attempting to sync up with the main registry simultaneously.
+The second decouples workflow completion from registry updating and allows a rate-limited number of updates to occur in parallel.
+This would lead to a situation where a workflow can complete but the registry it out of date for an indeterminate period of time and would delay submission of workflows that depend on the results.
+Were that to happen though, it would be indicative that letting each workflow attempt the sync up directly at the end would be risky.
+Using a queue also completely removes registry credentials from workflow execution since the queued updates would be running in a completely different environment.
+
+The synchronization must check that a corresponding dataset was written to the object store since it is possible for a workflow to partially complete and synchronization should (optionally?) happen even on failure since that can allow resubmission of the workflow with different configurations and also allow investigation of the intermediate products.
+
+The limited registry approach still requires that the butler is interacting with an object store and would require the use of signed URLs if the datasets were being written to their final location in the shared datastore.
+If the signing client becomes a bottleneck an alternative could be to use a temporary bucket specifically for that workflow.
+
+The synchronization job would therefore also need to move the files from the temporary location to the final location.
+
+
 Summary
 =======
 
-Both the job-level pooling and fully externalized approach to Registry should be able to improve throughput significantly.
-The job-level pooling approach is simplest to implement and should be attempted first and performance compared to the current system.
+Whilst the job-level pooling and externalized approaches will help with registry contention, by far the safest approach, and in the long term the simplest, is to adopt the limited read-only registry.
+This removes any worries about merging the outputs of multiple jobs and lets us leverage the knowledge already known to the graph builder.
 
 .. rubric:: References
 
