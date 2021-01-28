@@ -108,12 +108,7 @@ One problem with this approach is that the Butler is designed such that the regi
 This can result in the database transactions taking a relatively long time for large data files (which first have to be written to local scratch space and then uploaded to the object store).
 Long-lived transactions can cause trouble with database responsiveness when tens of thousands of connections are active.
 
-There are also concerns, as expressed in :jira:`DM-26302`, that the connection management in Butler registry is non-optimal since it disables connection pooling in SQLAlchemy.
-
-.. note::
-  How long does the ``pipetask`` executor keep each registry connection open?
-  Is a single connection used for the duration of execution of each quanta?
-  Or is there one connection used for all the gets at the start and a new connection used for all the puts at the end?
+There are also concerns, as expressed in :jira:`DM-26302`, that the connection management in Butler registry is non-optimal since it disables connection pooling in SQLAlchemy and currently a single database connection is maintained for the duration of each quantum's execution.
 
 Job-level Pooling
 -----------------
@@ -125,6 +120,7 @@ This SQLite database would still refer to the datasets in their original datasto
 The pipeline would then be executed using the local registry and would interact as before with the cloud object store.
 When the processing completes the newly-created records would be exported from the local registry and imported to the cloud registry.
 This would use the automatic transfer mode since the files are already present in the object store in the correct place.
+If the job fails it is an open question as to whether the datasets that were successfully created are synched to the registry or not.
 
 If quanta are chained, with the outputs of one ``PipelineTask`` feeding directly to the inputs of the next within the same job, the datastore will be configured to do local caching and write the file locally as well as to the object store so that the next one would read the file directly.
 
@@ -164,13 +160,15 @@ Limited Read-Only Registry
 
 When a quantum graph is constructed the graph builder knows every single input dataset and every output dataset and how they relate to each other.
 The graph builder also knows the expected URIs of all the files created by the pipelines.
-This knowledge could be used to construct a limited in-memory non-SQL registry that could be constructed by reading a static file created by the graph builder.
+This knowledge could be used to construct a limited SQLite registry that could be constructed by the graph builder and provided to each invocation.
+BPS could for example upload this SQLite file to object store and provide a URI to each job to allow it to be retrieved.
 This static file would then be passed to every job being executed and importantly, unlike the externalized approach above, it will never need to handle merging of registry information during the execution of the workflow graph.
 
 On ``butler.put()`` the implementation would check that the relevant entry is expected but otherwise not try to do anything else.
 The datastore would also write the file to the object store and interact with registry but registry would not write anything to registry.
 Datastore would need to be changed to allow it to read the output URI directly from the registry to ensure that the expected output URI matches the one chosen by datastore.
 This should be possible with a minor refactoring and is somewhat related to the refactoring that will be required to generate signed URLs from the URIs.
+An alternative is to change the way that ``pipe_base`` interacts with Butler such that it no longer uses native Butler calls but instead uses a specialized stripped down interface.
 
 On completion of the workflow the registry information can be handled in two ways:
 
