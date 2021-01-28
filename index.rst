@@ -195,6 +195,27 @@ Summary
 Whilst the job-level pooling and externalized approaches will help with registry contention, by far the safest approach, and in the long term the simplest, is to adopt the limited read-only registry.
 This removes any worries about merging the outputs of multiple jobs and lets us leverage the knowledge already known to the graph builder.
 
+Task Breakdown
+--------------
+
+The initial prototype implementation will not include URL signing since all Data Preview 0.2 workflow executions will be run by staff.
+
+An initial break down of work would then be:
+
+* Add facility to pipetask command line to create a minimalist SQLite registry from the constructed quantum graph.
+  Initially this registry could ignore the datastore table completely.
+* Create a new ``Datastore`` subclass that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
+  Also modify ``Datastore.put()`` such that the registry is never written to (this could be implemented as a new limited datastore registry manager class).
+* Either change ``pipe_base`` Butler interface to use an entirely new implementation of ``ButlerQuantumContext`` that ignores registry and uses the new ``Datastore`` class directly, or else implement a new ``Registry`` subclass that for write operations instead compares the supplied values with the expected values to ensure self-consistency.
+* Add option for ``pipetask run`` to use this new registry/datastore during the processing.
+* Write helper code in ``daf_butler`` to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
+  This should check that the referenced datasets are actually present in the expected location.
+  If a temporary location is used they should be transferred to the final datastore location.
+  If a dataset file is missing it should be removed from the import.
+* Update ``pipetask`` to optionally (but by default) do the registry/datastore merge on completion.
+* Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
+
+
 .. rubric:: References
 
 .. Make in-text citations with: :cite:`bibkey`.
