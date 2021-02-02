@@ -65,7 +65,7 @@ It's also made worse if jobs take roughly the same amount of time to execute and
 We mitigated some of this problem in the Google Proof of Concept by spreading the start time of the initial jobs randomly over a ten minute period.
 This smoothed out some of the spikes and allowed us to execute a few thousand jobs.
 
-Unfortunately this approach will not scale when hundreds of thousands to millions of jobs are in flight at the same time and all trying to write to the same PostgresSQL server.
+Unfortunately this approach will not scale when hundreds of thousands to millions of jobs are in flight at the same time and all trying to write to the same PostgreSQL server.
 It is also incompatible with a distributed processing approach where multiple data facilities are processing a fraction of the data and do not want to be reliant on one single server.
 We therefore need to change how we manage access to the registry and, possibly, datastores when we execute large workflows.
 
@@ -78,15 +78,12 @@ Assumptions
 
 The datasets created by the Rubin science pipelines are large and in a cloud environment it makes sense for the object store to be used directly by the Butler rather than attempting to use the workflow execution engine to stage the files to and from a workflow storage area to node local storage.
 Object stores are already designed to be efficient under load and should not cause any bottlenecks.
+This does not preclude using local cache for files that are the product of one quantum and the input to the next within the same job and it does not preclude a scenario where a shared file system is used instead of an object store.
 
 In this document it is assumed that the workflow execution is run with the credentials of a service account that can do direct connections to the object store and cloud database.
 The batch submission system would check that the user submitting the workflow has permissions to read from the input collections and write to the output collection.
 Workflow executions using the standard infrastructure will never attempt to delete datasets from registry.
 If jobs are being executed with science platform user credentials it will be necessary for the workflow execution system to use the client/server Butler interface (:cite:`DMTN-176`) which may result in an additional bottleneck to the registry and will require significant usage of signed URLs.
-
-.. note::
-  Could rate-limiting registry access be mediated by the Registry REST server to act as a queue?
-
 
 Reducing Registry Access
 ========================
@@ -99,7 +96,7 @@ There are many different points at which we can decide to do the registry update
 Immediate
 ---------
 
-The current approach used by the ``pipetask`` executor is to call ``butler.get()`` sequentially for each of the requested input datasets (sometimes this read can be deferred, or example when coadding many input images).
+The current approach used by the ``pipetask`` executor is to call ``butler.get()`` sequentially for each of the requested input datasets (sometimes this read can be deferred, for example when coadding many input images).
 When the ``PipelineTask`` completes each of the output datasets is then stored in the butler with a ``butler.put()``.
 
 It will use the Butler it has been configured to use and in the batch system that is a shared PostgreSQL registry and S3-like object store.
@@ -120,7 +117,7 @@ This SQLite database would still refer to the datasets in their original datasto
 The pipeline would then be executed using the local registry and would interact as before with the cloud object store.
 When the processing completes the newly-created records would be exported from the local registry and imported to the cloud registry.
 This would use the automatic transfer mode since the files are already present in the object store in the correct place.
-If the job fails it is an open question as to whether the datasets that were successfully created are synched to the registry or not.
+If the job fails it is an open question as to whether the datasets that were successfully created are synced to the registry or not.
 
 If quanta are chained, with the outputs of one ``PipelineTask`` feeding directly to the inputs of the next within the same job, the datastore will be configured to do local caching and write the file locally as well as to the object store so that the next one would read the file directly.
 
@@ -153,7 +150,7 @@ In this scenario pre-emption has no impact on registry state for pipeline jobs s
 Pre-emption still has to be understood in terms of the registry sync jobs and requires that the remote update of the cloud registry happens in a single transaction.
 
 This approach allows the submission system to decide whether the registry is updated multiple times within the graph or solely at the end since the registry merging jobs can be configured to either merge the inputs and pass them on complete, or merge, sync and trim.
-A trimmed registry can not be passed on to the next job if the remainder has not been synced with the cloud registry.
+A trimmed registry can not be passed on to the next job if the remainder has not been synced with the cloud registry because subsequeny sync jobs will not be able to add the earlier provenance information since they will not have it.
 
 Limited Read-Only Registry
 --------------------------
@@ -165,7 +162,7 @@ BPS could for example upload this SQLite file to object store and provide a URI 
 This static file would then be passed to every job being executed and importantly, unlike the externalized approach above, it will never need to handle merging of registry information during the execution of the workflow graph.
 
 On ``butler.put()`` the implementation would check that the relevant entry is expected but otherwise not try to do anything else.
-The datastore would also write the file to the object store and interact with registry but registry would not write anything to registry.
+The datastore would also write the file to the object store and interact with registry but might not write anything to registry itself.
 Datastore would need to be changed to allow it to read the output URI directly from the registry to ensure that the expected output URI matches the one chosen by datastore.
 This should be possible with a minor refactoring and is somewhat related to the refactoring that will be required to generate signed URLs from the URIs.
 An alternative is to change the way that ``pipe_base`` interacts with Butler such that it no longer uses native Butler calls but instead uses a specialized stripped down interface.
@@ -180,6 +177,7 @@ The second decouples workflow completion from registry updating and allows a rat
 This would lead to a situation where a workflow can complete but the registry it out of date for an indeterminate period of time and would delay submission of workflows that depend on the results.
 Were that to happen though, it would be indicative that letting each workflow attempt the sync up directly at the end would be risky.
 Using a queue also completely removes registry credentials from workflow execution since the queued updates would be running in a completely different environment.
+Some workflow managers can limit specific jobs to specific nodes and doing such a thing with the sync job could automatically enable rate-limiting whilst guaranteeing that workflow completion corresponds to an up-to-date registry.
 
 The synchronization must check that a corresponding dataset was written to the object store since it is possible for a workflow to partially complete and synchronization should (optionally?) happen even on failure since that can allow resubmission of the workflow with different configurations and also allow investigation of the intermediate products.
 
@@ -202,16 +200,17 @@ The initial prototype implementation will not include URL signing since all Data
 
 An initial break down of work would then be:
 
-* Add facility to pipetask command line to create a minimalist SQLite registry from the constructed quantum graph.
+* Add facility to ``pipe_base`` to create a minimalist SQLite registry from the constructed quantum graph.
   Initially this registry could ignore the datastore table completely.
 * Create a new ``Datastore`` subclass that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
-  Also modify ``Datastore.put()`` such that the registry is never written to (this could be implemented as a new limited datastore registry manager class).
+  For ``Datastore.put()`` it is entirely feasible for this to write to the standard registry (assuming it's not entirely read-only) as is done now even if that write does not make it to the subsequents jobs; this does not affect the gets from downstream jobs because those will always assume that a get is possible.
 * Either change ``pipe_base`` Butler interface to use an entirely new implementation of ``ButlerQuantumContext`` that ignores registry and uses the new ``Datastore`` class directly, or else implement a new ``Registry`` subclass that for write operations instead compares the supplied values with the expected values to ensure self-consistency.
+  It is also possible that a configuration option be added to standard ``Butler`` indicating that the registry interactions can be skipped and assumed to be valid for fully-qualified ``DatasetRef``.
 * Add option for ``pipetask run`` to use this new registry/datastore during the processing.
 * Write helper code in ``daf_butler`` to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
   This should check that the referenced datasets are actually present in the expected location.
   If a temporary location is used they should be transferred to the final datastore location.
-  If a dataset file is missing it should be removed from the import.
+  For a workflow to complete all the files must have been generated (even if they are stubs).
 * Update ``pipetask`` to optionally (but by default) do the registry/datastore merge on completion.
 * Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
 
