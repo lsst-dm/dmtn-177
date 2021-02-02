@@ -13,7 +13,7 @@ serial_number: "177"
 doc_id: "DMTN-177"
 
 # Title of the document, without the series/serial designation
-doc_title: "Shared-nothing gen3 workflow execution"
+doc_title: "Limiting Registry Access During Workflow Execution"
 
 # Author names, ordered as a list. Each author name should be formatted as 'First Last'
 authors:
@@ -37,7 +37,7 @@ authors:
 copyright: "2021, Association of Universities for Research in Astronomy, Inc. (AURA)"
 
 # Description. A short, 1-2 sentence statemement used by document indices.
-description: "Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the data are retrieved at the start of the workflow and stored at the end of the workflow, but during the workflow execution only local files are in use. This note describes the issues and provides a possible design."
+description: "Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling. This note describes the issues and provides a possible design."
 
 # Abstract, if available
 # abstract: >
