@@ -46,8 +46,6 @@
 
 .. note::
 
-   **This technote is not yet published.**
-
    Having every pipeline task in every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved.
    Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling.
    This note describes the issues and provides a possible design.
