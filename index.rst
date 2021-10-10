@@ -150,12 +150,12 @@ Pre-emption still has to be understood in terms of the registry sync jobs and re
 This approach allows the submission system to decide whether the registry is updated multiple times within the graph or solely at the end since the registry merging jobs can be configured to either merge the inputs and pass them on complete, or merge, sync and trim.
 A trimmed registry can not be passed on to the next job if the remainder has not been synced with the cloud registry because subsequeny sync jobs will not be able to add the earlier provenance information since they will not have it.
 
-Limited Read-Only Registry
---------------------------
+Prepopulated Read-Only SQLite Registry
+--------------------------------------
 
 When a quantum graph is constructed the graph builder knows every single input dataset and every output dataset and how they relate to each other.
 The graph builder also knows the expected URIs of all the files created by the pipelines.
-This knowledge could be used to construct a limited SQLite registry that could be constructed by the graph builder and provided to each invocation.
+This knowledge could be used to construct a SQLite registry that could be constructed by the graph builder and provided to each invocation.
 BPS could for example upload this SQLite file to object store and provide a URI to each job to allow it to be retrieved.
 This static file would then be passed to every job being executed and importantly, unlike the externalized approach above, it will never need to handle merging of registry information during the execution of the workflow graph.
 
@@ -184,33 +184,34 @@ If the signing client becomes a bottleneck an alternative could be to use a temp
 
 The synchronization job would therefore also need to move the files from the temporary location to the final location.
 
+Implementation
+^^^^^^^^^^^^^^
 
-Summary
-=======
+The initial prototype implementation (completed as of ``w_2021_40``) does not include URL signing since all Data Preview 0.2 workflow executions will be run by staff.
+This included:
 
-Whilst the job-level pooling and externalized approaches will help with registry contention, by far the safest approach, and in the long term the simplest, is to adopt the limited read-only registry.
+* Adding a ``buildExecutionButler`` function to ``pipe_base`` to create a prepopulated SQLite registry from the constructed quantum graph.
+  Initially this registry could ignore the datastore table completely.
+* Adding a new ``Datastore`` mode that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
+  For ``Datastore.put()`` it is entirely feasible for this to write to the standard registry (assuming it's not entirely read-only) as is done now even if that write does not make it to the subsequents jobs; this does not affect the gets from downstream jobs because those will always assume that a get is possible.
+* Adding a ``Butler`` configuration option indicating that registry interactions can be skipped and assumed to be valid for fully-qualified ``DatasetRef``.
+* Writing a new ``butler transfer-back`` subcommand to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
+  This checks that the referenced datasets are actually present in the expected location.
+* Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
+
+Analysis
+^^^^^^^^
+
+Whilst the job-level pooling and externalized approaches would help with registry contention, the prepopulated read-only SQLite registry approach is much simpler.
 This removes any worries about merging the outputs of multiple jobs and lets us leverage the knowledge already known to the graph builder.
 
-Task Breakdown
---------------
+This approach does not scale well with ``QuantumGraph`` size, however; the SQLite file carries roughly the same content as the serialized ``QuantumGraph`` (easily a few GB for large graphs), and hence the cost of transferring this file to a single-quantum job can easily exceed the runtime of the job.
+It also has three more subtle drawbacks:
 
-The initial prototype implementation will not include URL signing since all Data Preview 0.2 workflow executions will be run by staff.
-
-An initial break down of work would then be:
-
-* Add facility to ``pipe_base`` to create a minimalist SQLite registry from the constructed quantum graph.
-  Initially this registry could ignore the datastore table completely.
-* Create a new ``Datastore`` subclass that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
-  For ``Datastore.put()`` it is entirely feasible for this to write to the standard registry (assuming it's not entirely read-only) as is done now even if that write does not make it to the subsequents jobs; this does not affect the gets from downstream jobs because those will always assume that a get is possible.
-* Either change ``pipe_base`` Butler interface to use an entirely new implementation of ``ButlerQuantumContext`` that ignores registry and uses the new ``Datastore`` class directly, or else implement a new ``Registry`` subclass that for write operations instead compares the supplied values with the expected values to ensure self-consistency.
-  It is also possible that a configuration option be added to standard ``Butler`` indicating that the registry interactions can be skipped and assumed to be valid for fully-qualified ``DatasetRef``.
-* Add option for ``pipetask run`` to use this new registry/datastore during the processing.
-* Write helper code in ``daf_butler`` to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
-  This should check that the referenced datasets are actually present in the expected location.
-  If a temporary location is used they should be transferred to the final datastore location.
-  For a workflow to complete all the files must have been generated (even if they are stubs).
-* Update ``pipetask`` to optionally (but by default) do the registry/datastore merge on completion.
-* Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
+* It redefines the boundary between ``Registry`` and ``Datastore`` (as mediated by ``Butler``), introducing branching and other complexity into (at best) ``Butler`` methods or (worse) higher-level middleware tools, which now need to be able to work with either ``Registry`` or ``Datastore`` as the authority on dataset existence.
+* It forces ``Datastore`` to be able to work in a "prediction-based read" mode, another source of branching and complexity.
+* It relies heavily on object-store existence checks, both during execution and when transferring datasets back to the main data repository, to test whether predicted outputs were actually produced.
+  Many of these checks are redundant, and they involve an operation that object stores are necessarily not designed to perform efficiently.
 
 
 .. rubric:: References
