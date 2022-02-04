@@ -150,12 +150,12 @@ Pre-emption still has to be understood in terms of the registry sync jobs and re
 This approach allows the submission system to decide whether the registry is updated multiple times within the graph or solely at the end since the registry merging jobs can be configured to either merge the inputs and pass them on complete, or merge, sync and trim.
 A trimmed registry can not be passed on to the next job if the remainder has not been synced with the cloud registry because subsequeny sync jobs will not be able to add the earlier provenance information since they will not have it.
 
-Limited Read-Only Registry
---------------------------
+Prepopulated Read-Only SQLite Registry
+--------------------------------------
 
 When a quantum graph is constructed the graph builder knows every single input dataset and every output dataset and how they relate to each other.
 The graph builder also knows the expected URIs of all the files created by the pipelines.
-This knowledge could be used to construct a limited SQLite registry that could be constructed by the graph builder and provided to each invocation.
+This knowledge could be used to construct a SQLite registry that could be constructed by the graph builder and provided to each invocation.
 BPS could for example upload this SQLite file to object store and provide a URI to each job to allow it to be retrieved.
 This static file would then be passed to every job being executed and importantly, unlike the externalized approach above, it will never need to handle merging of registry information during the execution of the workflow graph.
 
@@ -184,33 +184,132 @@ If the signing client becomes a bottleneck an alternative could be to use a temp
 
 The synchronization job would therefore also need to move the files from the temporary location to the final location.
 
+Implementation
+^^^^^^^^^^^^^^
 
-Summary
-=======
+The initial prototype implementation (completed as of ``w_2021_40``) does not include URL signing since all Data Preview 0.2 workflow executions will be run by staff.
+This included:
 
-Whilst the job-level pooling and externalized approaches will help with registry contention, by far the safest approach, and in the long term the simplest, is to adopt the limited read-only registry.
+* Adding a ``buildExecutionButler`` function to ``pipe_base`` to create a prepopulated SQLite registry from the constructed quantum graph.
+  Initially this registry could ignore the datastore table completely.
+* Adding a new ``Datastore`` mode that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
+  For ``Datastore.put()`` it is entirely feasible for this to write to the standard registry (assuming it's not entirely read-only) as is done now even if that write does not make it to the subsequents jobs; this does not affect the gets from downstream jobs because those will always assume that a get is possible.
+* Adding a ``Butler`` configuration option indicating that registry interactions can be skipped and assumed to be valid for fully-qualified ``DatasetRef``.
+* Writing a new ``butler transfer-back`` subcommand to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
+  This checks that the referenced datasets are actually present in the expected location.
+* Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
+
+Analysis
+^^^^^^^^
+
+Whilst the job-level pooling and externalized approaches would help with registry contention, the prepopulated read-only SQLite registry approach is much simpler.
 This removes any worries about merging the outputs of multiple jobs and lets us leverage the knowledge already known to the graph builder.
 
-Task Breakdown
---------------
+This approach does not scale well with ``QuantumGraph`` size, however; the SQLite file carries roughly the same content as the serialized ``QuantumGraph`` (easily a few GB for large graphs), and hence the cost of transferring this file to a single-quantum job can easily exceed the runtime of the job.
+It also has four more subtle drawbacks:
 
-The initial prototype implementation will not include URL signing since all Data Preview 0.2 workflow executions will be run by staff.
+* It redefines the boundary between ``Registry`` and ``Datastore`` (as mediated by ``Butler``), introducing branching and other complexity into (at best) ``Butler`` methods or (worse) higher-level middleware tools, which now need to be able to work with either ``Registry`` or ``Datastore`` as the authority on dataset existence.
+* It forces ``Datastore`` to be able to work in a "prediction-based read" mode, another source of branching and complexity.
+* It relies heavily on object-store existence checks, both during execution and when transferring datasets back to the main data repository, to test whether predicted outputs were actually produced.
+  Many of these checks are redundant, and they involve an operation that object stores are necessarily not designed to perform efficiently.
 
-An initial break down of work would then be:
 
-* Add facility to ``pipe_base`` to create a minimalist SQLite registry from the constructed quantum graph.
-  Initially this registry could ignore the datastore table completely.
-* Create a new ``Datastore`` subclass that no longer queries registry on ``Datastore.get()`` but instead assumes that the active datastore configuration (read from the user-supplied Butler configuration) would give the correct answer (something that can not be relied on in general but can be relied on in this limited context) for file template and formatter class.
-  For ``Datastore.put()`` it is entirely feasible for this to write to the standard registry (assuming it's not entirely read-only) as is done now even if that write does not make it to the subsequents jobs; this does not affect the gets from downstream jobs because those will always assume that a get is possible.
-* Either change ``pipe_base`` Butler interface to use an entirely new implementation of ``ButlerQuantumContext`` that ignores registry and uses the new ``Datastore`` class directly, or else implement a new ``Registry`` subclass that for write operations instead compares the supplied values with the expected values to ensure self-consistency.
-  It is also possible that a configuration option be added to standard ``Butler`` indicating that the registry interactions can be skipped and assumed to be valid for fully-qualified ``DatasetRef``.
-* Add option for ``pipetask run`` to use this new registry/datastore during the processing.
-* Write helper code in ``daf_butler`` to simplify the special case of exporting the registry from the SQLite file and importing it into the original registry.
-  This should check that the referenced datasets are actually present in the expected location.
-  If a temporary location is used they should be transferred to the final datastore location.
-  For a workflow to complete all the files must have been generated (even if they are stubs).
-* Update ``pipetask`` to optionally (but by default) do the registry/datastore merge on completion.
-* Update BPS to insert a special job at the end of the workflow graph that will run this merging code.
+Limited Quantum-Backed Butler
+-----------------------------
+
+Our ``Quantum`` data structure already has *almost* all of the information that we need to obtain from the SQL database during execution, especially if we can have ``Datastore`` reads operate in the "predicted records" mode introduced in the previous section, at least in the case of intermediate datasets written as part of the same submission (and hence using the same ``Datastore`` configuration).
+In particular, ``Quantum`` is missing only
+
+* the ``Datastore`` internal records for overall-input datasets;
+* the dataset IDs for intermediate and output datasets.
+
+If we can add these to the ``Quantum`` class (and its serialized form inside a ``QuantumGraph``), we can implement the ``Butler`` read interfaces used during execution via an object backed only by a predicted-records-mode ``Datastore`` and a ``Quantum`` instance.
+For the limited ``Butler.put`` operation during execution, we can call ``Datastore.put`` directly; when execution of that ``Quantum`` is done, we can then choose to either:
+
+1. discard the resulting ``Datastore`` records;
+2. save the resulting records to a per-``Quantum`` file in an object store (possibly via the ``Datastore``, possibly via direct ``ButlerURI`` usage, probably in JSON or SQLite format).
+
+In the first case, the ``transfer-back`` job closely resembles the one described in the previous section, but with the potential datasets to be transferred obtained by iterating over the datasets ``QuantumGraph``, not a prepopulated SQLite database.
+Like the prepopulated SQLite database method, though, we must perform per-dataset existence checks and regenerate the ``Datastore`` records to be inserted after execution completes.
+
+In the second case, the ``transfer-back`` job instead iterates over the quanta in the ``QuantumGraph``, fetches the per-``Quantum`` output files, and transfers their content to the database.
+This could be much more efficient when the number of output datasets per quantum is large (one object store fetch vs. many object store existence checks per ``Quantum``).
+It also opens the door to writing provenance data and supporting new ``Datastore`` implementations during execution (e.g. a ``TableDatastore`` that writes a single-metric-value dataset to a row in table, not a full file).
+Ideally the provenance information would also be transferred back to tables in the shared repository database, once schema changes make this possible.
+For the rest of this section, we will assume (2).
+
+Implementation
+^^^^^^^^^^^^^^
+
+The classes described on this section have been prototyped on the `DM-32072 branch of daf_butler <https://github.com/lsst/daf_butler/pull/584>`__.
+
+
+1. Define a new `LimitedButler`_ abstract base class for ``Butler`` that defines only the operations needed for execution; these all operate on resolved references only.
+   This includes new ``putDirect`` and ``datasetExistsDirect`` methods that write datasets with a pregenerated UUID and test for dataset existence given a resolved ``DatasetRef``, respectively.
+   `LimitedButler`_ abstracts over the questions of whether datasets are being managed by a ``Registry`` and whether ``Datastore`` falls back to prediction-based read mode, hiding the answers from all higher-level code; in the main ``Butler`` implementation of these methods, a shared ``Registry`` is assumed and records are never predicted.
+
+2. Add a `DatastoreRecordData`_ struct and methods that can be used to export datastore opaque records, and `attach it`_ to ``Quantum``.
+
+3. Extend ``QuantumGraph`` construction to generate random UUIDs for output datasets (including intermediates) and extract and save ``Datastore`` records for input datasets (including prerequisites).
+
+4. Add a `QuantumBackedButler`_ implementation of `LimitedButler`_ with no ``Registry``, with its ``Datastore`` allowed to fall back to prediction-based reads.
+   This mostly just needs to provide a ``DatastoreRegistryBridge`` and ``OpaqueTableManager`` to support the ``Datastore``, with any writes the opaque tables serialized to per-quantum files by a method that will be called when a quantum finishes executing.
+
+5. Modify ``SingleQuantumExecutor`` and ``ButlerQuantumContext`` to use optionally construct and use a ``QuantumBackedButler``, and to stick to the ``LimitedButler`` interface even if they have a full ``Butler``.
+
+6. Write a new ``transfer-back`` operation that iterates over the quanta in a ``QuantumGraph``, fetches the per-quantum records files, uploads their ``Datastore`` content to the shared database, and inserts ``Registry`` records for all datasets actually written.
+   Note that this requires combining data ID information from the ``QuantumGraph`` with UUID-keyed data from the per-quantum files.
+   Much of this logic has already been prototyped as part of `QuantumBackedButler_`.
+
+.. _LimitedButler: https://github.com/lsst/daf_butler/pull/584/commits/f0f5ed4b39077d75eb2806a61cd77de4ba5ba9e8
+
+.. _DatastoreRecordData: https://github.com/lsst/daf_butler/pull/584/commits/1bbba30677f807a0f4e66e318b07aed61a0a866c
+
+.. _attach it: https://github.com/lsst/daf_butler/pull/584/commits/468e7aa188ec68cb2aac725508bf477c4b596e1f
+
+.. _QuantumBackedButler: https://github.com/lsst/daf_butler/pull/584/commits/026b81c8d6cab0d3e6005e5733e5dadcb172c33f
+
+Analysis
+^^^^^^^^
+
+This approach directly addresses the scaling problem with the previous approach, because our ``QuantumGraph`` I/O system already supports per-quantum reads, and there is no SQLite database to transfer.
+With implementation described above, it can also mitigates some of its other problems, by encapsulating the different modes of operation and component boundaries behind the ``LimitedButler`` interface.
+And while object-store existence checks are still used heavily by ``SingleQuantumExecutor``, they are no longer necessary for transferring datasets back to the shared database.
+A future extension in which opaque records are written to a scalable NoSQL database during execution instead of per ``Quantum`` files would also permit those object store checks to be replaced by lookups against that database, without any changes to higher-level middleware (just new ``LimitedButler`` and ``OpaqueTableManager`` implementations).
+
+One possible weakness of this approach is that using ``LimitedButler`` as the interface that backs execution may ultimately be temporary: we may someday *never* want to use the main SQL database to back execution (even in standalone ``pipetask run`` invocations).
+Making production of data products distinct from "publishing" them to others could be valuable functionality, especially for public data repositories with many science users, and it could provide a useful paradigm for a much-needed ``pipetask`` interface overhaul.
+In such a future, ``SingleQuantumExecutor`` and ``ButlerQuantumContext`` could just use ``Datastore`` interfaces directly, because they would always be operating on the assumption that datasets are being written only to a ``Datastore``, and identifying whether a predicted dataset actually exists is wholly a ``Datastore`` responsibility as well.
+
+Finally, this approach makes some conceptual breaks with the past that *seem* like good moves, but nevertheless merit some attention.
+
+First, it moves arguably the most important source of dataset UUIDs out of the butler and into ``QuantumGraph`` generation (or at least into a butler/registry convenience method that can bee called by ``QuantumGraph`` generation).
+Up to now, we had considered UUID generation to be strictly a butler implementation detail, in part because of a desire to support legacy data repositories with autoincrement integer IDs, and in part out of a healthy tendency towards encapsulating things higher-level code shouldn't have cared about.
+If we take this approach to batch execution, we will be relying directly on UUIDs (in particular assuming that UUIDs generated for one ``QuantumGraph`` will never collide with datasets written to the main repository while it is being executed), and any previously "nice-to-have" guarantees about IDs not being rewritten become hard requirements.
+
+Second, it breaks our past association of resolved ``DatasetRefs`` with dataset existence; ``QuantumGraph`` objects will now be populated with exclusively resolved ``DatasetRef`` objects, making it quite easy to obtain resolved references to datasets that were predicted but were not produced (or have not yet been produced).
+``Datastore`` existence (either via file checks or internal record checks) is now more firmly the only way to tell what actually exists.
+We had already started down this path with prepopulated registry approach, but it is worth taking a moment to consider where it will take us.
+Two additional advantages of this conceptual approach stand out:
+
+* By assigning UUIDs even to predicted-only outputs, recording provenance will be much easier - we can use the same kind of dataset ID for all links, instead of having to invent a new kind of ID (or rely exclusively on data ID + ``RUN`` + dataset type) for datasets never actually written.
+* By removing the most prominent source of unresolved ``DatasetRef`` objects (actually the only production - rather than unit test - source I can think of), we may be able to make massive simplifications to the ``DatasetRef`` class and all of the code that uses it (which currently has to constantly check for whether refs are resolved).
+  We may even be able to simplify the ``Butler`` methods that currently take ``DatasetRef`` objects; if we have ``*Direct`` variants that require resolved references, perhaps there is no need for the non-direct variants to accept ``DatasetRef`` objects at all.
+
+On the other hand, in order to bring predicted-only provenance back to the shared database, we will need to actually have regular ``Registry`` entries for those predicted-only datasets.
+These would be confusing for users if we didn't keep them from appearing in queries by default.
+Transferring them into different ``RUN`` collections could be a decent stopgap (and we don't need to include them in ``Registry`` at all until we put provenance in the ``Registry``), but finally providing good query support for "only datasets that exist in a ``Datastore``" feels like a much more complete and natural solution.
+The table intended to back those queries - ``dataset_location`` - is something that has long felt underdesigned and perhaps premature; it will probably need work if it suddenly becomes much more important.
+This may be an opportunity to fix other problems, however; the messy transactional relationship between ``Registry`` and ``Datastore`` (especially as regards deletion) is predicated on the assumption that datasets must exist in a ``Registry`` in order to exist in a ``Datastore``, and ``dataset_location`` is at the center of that.
+Embracing the idea that datasets may exist in either ``Registry`` or ``Datastore`` (or both, of course) may provide useful simplifications.
+
+Transition from Prepopulated Registries
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The implementation plan for this section does not include trying to simultaneously support the existing prepopulated registry method, as I think we want to retire that as soon as we have another approach available.
+For a short period, just using ``if`` guards to allow both approaches to coexist makes sense, even if the legacy prepopulated registry support violates some of the behavioral guarantees of the new ABC.
+
+Another approach that may be better for continued support of both approaches would be to implement a new ``LimitedButler`` subclass to be backed by a prepopulated registry, which should reduce or even eliminate the need for other middleware code (specifically ``SingleQuantumExecutor``) to be aware of the mode in which execution is occurring.
 
 
 .. rubric:: References
