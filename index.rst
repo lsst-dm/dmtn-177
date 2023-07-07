@@ -336,6 +336,9 @@ Both runs were made at USDF with BPS using the HTCondor plugin.
    As a result, we decided to exclude it from the report.
    Most likely the large difference was caused by some transient, external factors affecting the execution of the HTCondor job running the task. 
 
+These runs demonstrate that the quantum-backed butler is faster than the execution butler and results in much more stable job durations that are now dominated by the processing time and not by the unpredictable times from copying the SQLite file to each node.
+Using the quantum-backed butler also significantly speeds up BPS submission as there is no need to create a SQLite registry which takes a significant fraction of the submission time for large workflows.
+
 .. rubric:: References
 
 .. Make in-text citations with: :cite:`bibkey`.
