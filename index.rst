@@ -331,7 +331,7 @@ Both runs were made at USDF with BPS using the HTCondor plugin.
 
 .. note::
 
-   For ``pipetaskInit`` its duration was approx. 42 min. when using the execution butler and only 2 min. when using the quantum-backed butler.
+   For ``pipetaskInit`` its duration was approximately 42 minutes when using the execution butler and only 2 minutes when using the quantum-backed butler.
    However, we didn't observe similarly large discrepancies for other (though smaller) runs.
    As a result, we decided to exclude it from the report.
    Most likely the large difference was caused by some transient, external factors affecting the execution of the HTCondor job running the task. 
