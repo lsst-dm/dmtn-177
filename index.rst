@@ -327,6 +327,7 @@ Both runs were made at USDF with BPS using the HTCondor plugin.
    Red ones show corresponding results for the workflow which used quantum-backed butler (QBB).
    In both cases, job duration was calculated as the difference between the start and the end of an HTCondor job.
    All reported times are in minutes.
+   As the execution times of the final job for EB and QBB were practically identical (~12 minutes) the corresponding bars overlap to such an extent that only one of them (for QBB) is visible on the plot.
 
 .. note::
 
