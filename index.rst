@@ -311,6 +311,30 @@ For a short period, just using ``if`` guards to allow both approaches to coexist
 
 Another approach that may be better for continued support of both approaches would be to implement a new ``LimitedButler`` subclass to be backed by a prepopulated registry, which should reduce or even eliminate the need for other middleware code (specifically ``SingleQuantumExecutor``) to be aware of the mode in which execution is occurring.
 
+Performance
+^^^^^^^^^^^
+
+To compare overall performance of the execution and the quantum-backed butler we selected Step 1 on DC2 test-med-1.
+For each run, the workflow consisted of total 57,305 quanta distributed evenly between five tasks: ``isr``, ``characterizeImage``, ``calibrate``, ``writeSourceTable``, ``transformSourceTable``.
+LSST Batch Processing Service (BPS) added two more jobs to the workflow: ``pipetaskInit``, ``finalJob``.
+Both runs were made at USDF with BPS using the HTCondor plugin.
+
+ 
+.. figure:: /_static/eb_vs_qbb.png
+   :name: fig-eb_vs_qbb
+
+   Distributions of job durations grouped by pipetask name.
+   Blue histograms depict time distributions for workflow execution which used prepopulated read-only SQLite registry also known as the execution butler (EB).
+   Red ones show corresponding results for the workflow which used quantum-backed butler (QBB).
+   In both cases, job duration was calculated as the the difference between the start and the end of an HTCondor job.
+   All reported times are in minutes.
+
+.. note::
+
+   For ``pipetaskInit`` its duration was approx. 42 min. when using the execution butler and only 2 min. when using the quantum-backed butler.
+   However, we didn't observe similarly large discrepancies for other (though smaller) runs.
+   As a resutl, we decided to exclude it from the report.
+   Most likely the large difference was caused by some transient, external factors affecting the execution of the HTCondor job running the task. 
 
 .. rubric:: References
 
