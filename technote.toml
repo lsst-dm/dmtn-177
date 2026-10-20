@@ -17,3 +17,19 @@ orcid = "https://orcid.org/0000-0001-5982-167X"
 name = "NSF-DOE Vera C. Rubin Observatory / NSF NOIRLab"
 internal_id = "RubinObs"
 ror = "https://ror.org/048g3cy84"
+[[technote.authors]]
+name = {given = "James F.", family = "Bosch"}
+internal_id = "boschjf"
+orcid = "https://orcid.org/0000-0003-2759-5764"
+[[technote.authors.affiliations]]
+name = "Princeton University"
+internal_id = "Princeton-Astro"
+ror = "https://ror.org/00hx57361"
+[[technote.authors]]
+name = {given = "Mikolaj", family = "Kowalik"}
+internal_id = "kowalikm"
+orcid = "https://orcid.org/0000-0002-9801-5969"
+[[technote.authors.affiliations]]
+name = "University of Illinois at Urbana-Champaign"
+internal_id = "NCSA"
+ror = "https://ror.org/03g9ch715"
