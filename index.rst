@@ -6,55 +6,6 @@ Limiting Registry Access During Workflow Execution
 
    Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling. This note describes the issues and provides a possible design.
 
-..
-  Technote content.
-
-  See https://developer.lsst.io/restructuredtext/style.html
-  for a guide to reStructuredText writing.
-
-  Do not put the title, authors or other metadata in this document;
-  those are automatically added.
-
-  Use the following syntax for sections:
-
-  Sections
-  ========
-
-  and
-
-  Subsections
-  -----------
-
-  and
-
-  Subsubsections
-  ^^^^^^^^^^^^^^
-
-  To add images, add the image file (png, svg or jpeg preferred) to the
-  _static/ directory. The reST syntax for adding the image is
-
-  .. figure:: /_static/filename.ext
-     :name: fig-label
-
-     Caption text.
-
-   Run: ``make html`` and ``open _build/html/index.html`` to preview your work.
-   See the README at https://github.com/lsst-sqre/lsst-technote-bootstrap or
-   this repo's README for more info.
-
-   Feel free to delete this instructional comment.
-
-
-
-
-.. TODO: Delete the note below before merging new content to the master branch.
-
-.. note::
-
-   Having every pipeline task in every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved.
-   Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling.
-   This note describes the issues and provides a possible design.
-
 Introduction
 ============
 
@@ -323,7 +274,7 @@ To compare overall performance of the execution and the quantum-backed butler we
 For each run, the workflow consisted of 57,305 quanta distributed evenly between five tasks: ``isr``, ``characterizeImage``, ``calibrate``, ``writeSourceTable``, ``transformSourceTable``.
 Rubin's BPS added two more jobs to the workflow: ``pipetaskInit`` and ``finalJob``.
 Both runs were made at USDF with BPS using the HTCondor plugin.
- 
+
 .. figure:: /_static/eb_vs_qbb.png
    :name: fig-eb_vs_qbb
 
@@ -339,7 +290,7 @@ Both runs were made at USDF with BPS using the HTCondor plugin.
    For ``pipetaskInit`` its duration was approximately 42 minutes when using the execution butler and only 2 minutes when using the quantum-backed butler.
    However, we didn't observe similarly large discrepancies for other (though smaller) runs.
    As a result, we decided to exclude it from the report.
-   Most likely the large difference was caused by some transient, external factors affecting the execution of the HTCondor job running the task. 
+   Most likely the large difference was caused by some transient, external factors affecting the execution of the HTCondor job running the task.
 
 These runs demonstrate that the quantum-backed butler is faster than the execution butler and results in much more stable job durations that are now dominated by the processing time and not by the unpredictable times from copying the SQLite file to each node.
 Using the quantum-backed butler also significantly speeds up BPS submission as there is no need to create a SQLite registry which takes a significant fraction of the submission time for large workflows.
@@ -347,9 +298,4 @@ Using the quantum-backed butler also significantly speeds up BPS submission as t
 References
 ==========
 
-
-.. Make in-text citations with: :cite:`bibkey`.
-
 .. bibliography::
-
-    :style: lsst_aa
