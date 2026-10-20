@@ -1,3 +1,11 @@
+##################################################
+Limiting Registry Access During Workflow Execution
+##################################################
+
+.. abstract::
+
+   Having every job in a workflow read from registry and datastore and then write to registry and datastore does not scale when millions of jobs are involved. Instead we need an approach where the reads and writes are load-balanced to provide sufficient scaling. This note describes the issues and provides a possible design.
+
 ..
   Technote content.
 
@@ -36,11 +44,8 @@
 
    Feel free to delete this instructional comment.
 
-:tocdepth: 1
 
-.. Please do not modify tocdepth; will be fixed when a new Sphinx theme is shipped.
 
-.. sectnum::
 
 .. TODO: Delete the note below before merging new content to the master branch.
 
@@ -339,9 +344,12 @@ Both runs were made at USDF with BPS using the HTCondor plugin.
 These runs demonstrate that the quantum-backed butler is faster than the execution butler and results in much more stable job durations that are now dominated by the processing time and not by the unpredictable times from copying the SQLite file to each node.
 Using the quantum-backed butler also significantly speeds up BPS submission as there is no need to create a SQLite registry which takes a significant fraction of the submission time for large workflows.
 
-.. rubric:: References
+References
+==========
+
 
 .. Make in-text citations with: :cite:`bibkey`.
 
-.. bibliography:: local.bib lsstbib/books.bib lsstbib/lsst.bib lsstbib/lsst-dm.bib lsstbib/refs.bib lsstbib/refs_ads.bib
+.. bibliography::
+
     :style: lsst_aa
